@@ -7,6 +7,7 @@ import logging
 import time
 import mysql.connector
 import configparser
+import os
 
 topic_list = []
 character_list = []
@@ -190,7 +191,6 @@ def get_all_characters_from_db(active):
         select_statement = """SELECT url FROM characters"""
 
     mydb = connect_to_DB()
-    logger.info("Connection should have been made.")
 
     try:
         if mydb is None:
@@ -264,6 +264,20 @@ def insert_characters():
         logger.error("Failure in insert_database()")
         return False
 
+def cleanup():
+    # new_urls.json cleanup
+    if os.path.exists("new_urls.json"):
+        os.remove("new_urls.json")
+        logger.ingo("Removed new_urls.json")
+    else:
+        logger.error("new_urls.json does not exist")
+    
+    # characters.json cleanup
+    if os.path.exists("characters.json"):
+        os.remove("characters.json")
+        logger.ingo("Removed new_urls.json")
+    else:
+        logger.error("characters.json does not exist")
 
 def get_character_details(name_of_spider):
     process = CrawlerProcess()
@@ -276,6 +290,9 @@ def get_character_details(name_of_spider):
 
 def determine_new_active_characters():
     urls_of_new_active_chars = []
+
+    # Open the active character json file
+    # This will be dated with the date of the active character run
     with open(time.strftime('active-%Y-%m-%d.json')) as f:
         urls = json.load(f)
 
@@ -289,9 +306,23 @@ def determine_new_active_characters():
         else:
             # Need to get the data and add it to the database
             urls_of_new_active_chars.append(url)
+    
+    # Check if any urls in the list
+    if not urls_of_new_active_chars:
+        logger.info("No new urls")
+    else:
+        # Write urls from list to json file
+        with open('new_urls.json', 'w') as fout:
+            json.dump(urls_of_new_active_chars, fout)
 
-    with open('new_urls.json', 'w') as fout:
-        json.dump(urls_of_new_active_chars, fout)
+        # Get details on each character in the list
+        get_character_details(CharacterSpider)
+
+        # Insert details into the database
+        insert_characters()
+
+        # Clean up the directory a little
+        cleanup()
     
 
 
@@ -329,8 +360,8 @@ if __name__ == "__main__":
         logger.info("--detail/-d")
         try:
             determine_new_active_characters()
-            get_character_details(CharacterSpider)
-            insert_characters()
+            # get_character_details(CharacterSpider)
+            # insert_characters()
         except:
             logger.error("Failure in get_character_details()")
         logger.info("End --detail/-d")
