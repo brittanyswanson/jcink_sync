@@ -224,9 +224,12 @@ def get_active_characters(name_of_spider):
         # list to json
         json.dump(topic_list, json_file)
 
+# Should you really insert?
 def insert_characters():
     with open('characters.json') as c:
             characters = json.load(c)
+
+    logger.info("Inside insert_characters...the function.  With permission.  ;)")
 
     temp_list = []
     row_list = []
@@ -325,7 +328,6 @@ def determine_new_active_characters():
         cleanup()
     
 
-
 if __name__ == "__main__":
     # Initialize parser
     my_parser = argparse.ArgumentParser()
@@ -344,6 +346,7 @@ if __name__ == "__main__":
         logger.info("--active/-a")
         try:
             get_active_characters(TopicSpider)
+            determine_new_active_characters()
         except:
             logger.error("Failure in get_active_characters()")
         logger.info("End --active/-a")        
