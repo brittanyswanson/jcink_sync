@@ -12,8 +12,10 @@ import os
 topic_list = []
 character_list = []
 
+json_path = "jcink_sync/"
+
 # Logging Setup
-logging.basicConfig(filename=time.strftime('jcink_sync-%Y-%m-%d.log'), 
+logging.basicConfig(filename=time.strftime('jcink_sync/logs/jcink_sync-%Y-%m-%d.log'), 
                     level=logging.INFO,
                     format="%(asctime)s - %(levelname)s - %(message)s", 
                     filemode='a') 
@@ -21,7 +23,7 @@ logger = logging.getLogger()
 
 # Configuration options loaded from env.ini file
 config = configparser.ConfigParser()
-config.read('env.ini')
+config.read('jcink_sync/env.ini')
 creds = config['mysql']
 host = creds['host']
 database = creds['db']
@@ -84,7 +86,7 @@ class TopicSpider(scrapy.Spider):
         # open_in_browser(response)
         try:
             # Get the name of the subforum we're browsing here
-            maintitle = response.xpath('//div[@class="maintitle"]/text()').extract()
+            # maintitle = response.xpath('//div[@class="maintitle"]/text()').extract()
 
             try:
                 # topic urls
@@ -124,12 +126,16 @@ class CharacterSpider(scrapy.Spider):
     name = 'character'
     
     def start_requests(self):
-        with open('new_urls.json') as f:
+        logger.info("Open: new_urls.json")
+        with open(json_path + 'new_urls.json') as f:
             urls = json.load(f)
         # urls = ['http://drivingtowarddeath.jcink.net/index.php?showtopic=6021',]
 
         for url in urls:
-            yield scrapy.Request(url = url, callback=self.parse)
+            try:
+                yield scrapy.Request(url = url, callback=self.parse)
+            except:
+                logger.error("Could not parse " + url)
     
     def parse(self, response):
         # maintitle = response.xpath("//div[@class='maintitle']/text()").get()
@@ -213,20 +219,22 @@ def get_all_characters_from_db(active):
         character_url_list.append(character[0])
     return character_url_list
 
-def get_active_characters(name_of_spider):
-    # Scrape character pages
-    process = CrawlerProcess()
-    process.crawl(name_of_spider)
-    process.start()
 
-    # Write to json
-    with open(time.strftime('active-%Y-%m-%d.json'), 'w') as json_file:
-        # list to json
-        json.dump(topic_list, json_file)
 
+
+# -------------------------
+# Insert Characters
+#
+# Desc: insert characters from json file into db
+#
+# Dependencies: connect_to_DB()
+#
+# I: json_path + characters.json
+# O:
+# -------------------------
 # Should you really insert?
 def insert_characters():
-    with open('characters.json') as c:
+    with open(json_path + 'characters.json') as c:
             characters = json.load(c)
 
     logger.info("Inside insert_characters...the function.  With permission.  ;)")
@@ -267,66 +275,116 @@ def insert_characters():
         logger.error("Failure in insert_database()")
         return False
 
+
+
 def cleanup():
     # new_urls.json cleanup
-    if os.path.exists("new_urls.json"):
-        os.remove("new_urls.json")
-        logger.ingo("Removed new_urls.json")
+    if os.path.exists("jcink_sync/new_urls.json"):
+        os.remove("jcink_sync/new_urls.json")
+        logger.info("Removed jcink_sync/new_urls.json")
     else:
-        logger.error("new_urls.json does not exist")
+        logger.error("jcink_sync/new_urls.json does not exist")
     
     # characters.json cleanup
-    if os.path.exists("characters.json"):
-        os.remove("characters.json")
-        logger.ingo("Removed new_urls.json")
+    if os.path.exists("jcink_sync/characters.json"):
+        os.remove("jcink_sync/characters.json")
+        logger.info("Removed jcink_sync/characters.json")
     else:
-        logger.error("characters.json does not exist")
+        logger.error("jcink_sync/characters.json does not exist")
 
+
+
+# -------------------------
+# Get Character Details
+#
+# Desc: call spider to process application urls & write to json
+#
+# Dependencies: CrawlerProcess()
+#
+# I: name_of_spider
+# O: json_path + 'characters.json'
+# -------------------------
 def get_character_details(name_of_spider):
     process = CrawlerProcess()
     process.crawl(name_of_spider)
     process.start()
 
-    with open('characters.json', 'w') as fout:
+    with open(json_path + 'characters.json', 'w') as fout:
         json.dump(character_list, fout)
 
 
+
+
+# -------------------------
+# Determine New Active Characters
+#
+# Desc: compares json active characters to db active characters
+#
+# Dependencies: get_all_characters_from_db()
+#               json_path + 'active-%Y-%m-%d.json'
+#
+# I:
+# Output: json_path + 'new_urls.json'
+# -------------------------
 def determine_new_active_characters():
     urls_of_new_active_chars = []
 
-    # Open the active character json file
-    # This will be dated with the date of the active character run
-    with open(time.strftime('active-%Y-%m-%d.json')) as f:
+    with open(time.strftime(json_path + 'active-%Y-%m-%d.json')) as f:
         urls = json.load(f)
 
     # Get active character urls from the database
     database_urls = get_all_characters_from_db('Y')
 
+    # Compare the urls in active.json to what's in the database and make a list
     for url in urls:
         if url in database_urls:
-            # Celebrate!  No need to update this
             pass
         else:
-            # Need to get the data and add it to the database
             urls_of_new_active_chars.append(url)
     
-    # Check if any urls in the list
     if not urls_of_new_active_chars:
         logger.info("No new urls")
     else:
         # Write urls from list to json file
-        with open('new_urls.json', 'w') as fout:
+        with open(json_path + 'new_urls.json', 'w') as fout:
             json.dump(urls_of_new_active_chars, fout)
 
-        # Get details on each character in the list
-        get_character_details(CharacterSpider)
+        # get_character_details(CharacterSpider)
 
         # Insert details into the database
-        insert_characters()
+        # logger.info("Insert these details into the database")
+        # insert_characters()
 
         # Clean up the directory a little
-        cleanup()
+        # logger.info("Final cleanup")
+        # cleanup()
     
+
+
+
+# -------------------------
+# Get Active Characters
+#
+# Desc: runs scraper against forum to gather all active character applications
+#
+# Dependencies: CrawlerProcess()
+#
+# I: name_of_spider
+# O: json_path + 'active-%Y-%m-%d.json'
+# -------------------------
+def get_active_characters(name_of_spider):
+    process = CrawlerProcess()
+    process.crawl(name_of_spider)
+    process.start()
+
+    with open(time.strftime(json_path + 'active-%Y-%m-%d.json'), 'w') as json_file:
+        json.dump(topic_list, json_file)
+
+
+
+
+
+
 
 if __name__ == "__main__":
     # Initialize parser
@@ -343,31 +401,33 @@ if __name__ == "__main__":
     if args.active:
         logger.info("-----------------------------------------------------------")
         logger.info("-----------------------------------------------------------")
-        logger.info("--active/-a")
+        logger.info("Start")
+        logger.info("-----------------------------------------------------------")
+        logger.info("-----------------------------------------------------------")
         try:
             get_active_characters(TopicSpider)
-            determine_new_active_characters()
         except:
             logger.error("Failure in get_active_characters()")
-        logger.info("End --active/-a")        
         
-
-    # Compare active json to active in db to "prune" list
-    
-    # -----------------------------------------------------------
-    # Character Details
-    # -----------------------------------------------------------
+        try:
+            determine_new_active_characters()
+        except:
+            logger.error("Failure in determine_new_active_characters()")
+            
     elif args.detail:
         logger.info("-----------------------------------------------------------")
         logger.info("-----------------------------------------------------------")
-        logger.info("--detail/-d")
+        logger.info("Start detailed run")
+        logger.info("-----------------------------------------------------------")
+        logger.info("-----------------------------------------------------------")
         try:
-            determine_new_active_characters()
-            # get_character_details(CharacterSpider)
-            # insert_characters()
+            get_character_details(CharacterSpider)
         except:
-            logger.error("Failure in get_character_details()")
-        logger.info("End --detail/-d")
+            logger.error("Failure in get_character_details()")    
+
+        logger.info("Begin clean up")
+        cleanup()   
+        
     
     
 
