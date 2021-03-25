@@ -5,6 +5,7 @@ import json
 import argparse
 import logging
 import time
+import datetime
 import mysql.connector
 import configparser
 import os
@@ -12,6 +13,7 @@ import os
 topic_list = []
 character_list = []
 
+max_log_days = 7
 json_path = "jcink_sync/"
 
 # Logging Setup
@@ -35,6 +37,7 @@ To use the interactive shell, execute: scrapy shell 'http://quotes.toscrape.com/
 '''
 
 class TopicSpider(scrapy.Spider):
+    logging.getLogger('scrapy').propagate = False
     name = 'topic'
     
 
@@ -55,10 +58,14 @@ class TopicSpider(scrapy.Spider):
             'http://drivingtowarddeath.jcink.net/index.php?showforum=88',
             # Kemuri
             'http://drivingtowarddeath.jcink.net/index.php?showforum=95',
+            # Kitsunes
+            'http://drivingtowarddeath.jcink.net/index.php?showforum=158',
             # Merfolk
             'http://drivingtowarddeath.jcink.net/index.php?showforum=39',
             # Nuks
             'http://drivingtowarddeath.jcink.net/index.php?showforum=119',
+            # Qilins
+            'http://drivingtowarddeath.jcink.net/index.php?showforum=157',
             # Shifters
             'http://drivingtowarddeath.jcink.net/index.php?showforum=40',
             # Sphinx
@@ -123,19 +130,21 @@ class TopicSpider(scrapy.Spider):
                 yield response.follow(i)
 
 class CharacterSpider(scrapy.Spider):
+    logging.getLogger('scrapy').propagate = False
     name = 'character'
     
     def start_requests(self):
-        logger.info("Open: new_urls.json")
-        with open(json_path + 'new_urls.json') as f:
-            urls = json.load(f)
-        # urls = ['http://drivingtowarddeath.jcink.net/index.php?showtopic=6021',]
+        if os.path.exists(json_path + 'new_urls.json'):
+            with open(json_path + 'new_urls.json') as f:
+                urls = json.load(f)
 
-        for url in urls:
-            try:
-                yield scrapy.Request(url = url, callback=self.parse)
-            except:
-                logger.error("Could not parse " + url)
+            for url in urls:
+                try:
+                    yield scrapy.Request(url = url, callback=self.parse)
+                except:
+                    logger.error("Could not parse " + url)
+        else:
+            logger.info(json_path + 'new_urls.json does not exist.  CharacterSpider cannot run.')
     
     def parse(self, response):
         # maintitle = response.xpath("//div[@class='maintitle']/text()").get()
@@ -219,169 +228,172 @@ def get_all_characters_from_db(active):
         character_url_list.append(character[0])
     return character_url_list
 
-
-
-
-# -------------------------
-# Insert Characters
-#
-# Desc: insert characters from json file into db
-#
-# Dependencies: connect_to_DB()
-#
-# I: json_path + characters.json
-# O:
-# -------------------------
-# Should you really insert?
 def insert_characters():
-    with open(json_path + 'characters.json') as c:
+    # Desc: insert characters from json file into db
+
+    if os.path.exists(json_path + 'characters.json'):
+        with open(json_path + 'characters.json') as c:
             characters = json.load(c)
 
-    logger.info("Inside insert_characters...the function.  With permission.  ;)")
+            if len(characters) > 0:
+                temp_list = []
+                row_list = []
 
-    temp_list = []
-    row_list = []
+                for i in characters:
+                    temp_list.clear()
+                    url = i["url"].lower()
+                    name = i["name"].lower()
+                    species = i["species"].lower()
+                    faceclaim = i["faceclaim"].lower()
+                    player = i["player"].lower()
+                    temp_list = [url, name, species, faceclaim, player] 
+                    row_list.append(temp_list.copy())
 
-    for i in characters:
-        temp_list.clear()
-        url = i["url"].lower()
-        name = i["name"].lower()
-        species = i["species"].lower()
-        faceclaim = i["faceclaim"].lower()
-        player = i["player"].lower()
-        temp_list = [url, name, species, faceclaim, player] 
-        row_list.append(temp_list.copy())
+                mydb = connect_to_DB()
 
-    mydb = connect_to_DB()
+                # Statements
+                insert_statement = """INSERT INTO characters (url, name, species, faceclaim, player_name, active, updated) VALUES (%s, %s, %s, %s, %s, 'Y', now())"""
 
-    # Statements
-    insert_statement = """INSERT INTO characters (url, name, species, faceclaim, player_name, active, updated) VALUES (%s, %s, %s, %s, %s, 'Y', now())"""
+                try:
+                    if mydb is None:
+                        connect_to_DB()
+                    else:
+                        mydb.ping(True)
+                        my_cursor = mydb.cursor()
+                        my_cursor.executemany(insert_statement,row_list)
+                        mydb.commit()
+                        logger.info(str(my_cursor.rowcount) + " records inserted successfully into character table")
+                        mydb.close()
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    logger.error(str(e))
+                    mydb.rollback()
+                    logger.error("Failure in insert_database()")
+                    return False
+            else:
+                logger.info("No new characters to insert.")
+    else:
+        logger.info("characters.json does not exist")
 
-    try:
-        if mydb is None:
-            connect_to_DB()
-        else:
-            mydb.ping(True)
-            my_cursor = mydb.cursor()
-            my_cursor.executemany(insert_statement,row_list)
-            mydb.commit()
-            logger.info(str(my_cursor.rowcount) + " records inserted successfully into character table")
+def update_inactive_chars(urls_to_archive):
+    # Verify list is not blank
+    if len(urls_to_archive) > 1:
+        mydb = connect_to_DB()
+        update_statement = """UPDATE characters SET active = 'N' WHERE url = '""" 
+
+        try:
+            if mydb is None:
+                connect_to_DB()
+            else:
+                mydb.ping(True)
+
+            for x in urls_to_archive:
+                my_cursor = mydb.cursor()
+                my_cursor.execute(update_statement + x + "'")
+                mydb.commit()
+                logger.info(x + " successfully marked as inactive")
+                time.sleep(5)
+            
             mydb.close()
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        logger.error(str(e))
-        mydb.rollback()
-        logger.error("Failure in insert_database()")
-        return False
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            logger.error(str(e))
+            mydb.rollback()
+            logger.error("Failure executing update statement in update_inactive_chars")
+            return False
+    else:
+         logger.info("No characters to archive in list :: update_inactive_chars()")
 
+def log_cleanup(days_to_keep):
+    path = 'jcink_sync/logs'
+    earliest_date = datetime.datetime.today() - datetime.timedelta(days_to_keep)
 
+    if os.path.exists(path):
+        files = os.listdir(path)
+
+        for f in files:
+            f.find('.log')
+            file_date = datetime.datetime.strptime(f[11:-4], '%Y-%m-%d')
+            if earliest_date > file_date:
+                logger.info(file_date.strftime('%Y-%m-%d') + " has been removed from /logs")
+    else:
+        logger.error("Cannot locate " + path)
 
 def cleanup():
     # new_urls.json cleanup
     if os.path.exists("jcink_sync/new_urls.json"):
         os.remove("jcink_sync/new_urls.json")
         logger.info("Removed jcink_sync/new_urls.json")
-    else:
-        logger.error("jcink_sync/new_urls.json does not exist")
+
+    # active file cleanup
+    if os.path.exists("jcink_sync/active.json"):
+        os.remove("jcink_sync/active.json")
+        logger.info("Removed jcink_sync/active.json")
     
     # characters.json cleanup
     if os.path.exists("jcink_sync/characters.json"):
         os.remove("jcink_sync/characters.json")
         logger.info("Removed jcink_sync/characters.json")
-    else:
-        logger.error("jcink_sync/characters.json does not exist")
 
+    log_cleanup(max_log_days)
 
-
-# -------------------------
-# Get Character Details
-#
-# Desc: call spider to process application urls & write to json
-#
-# Dependencies: CrawlerProcess()
-#
-# I: name_of_spider
-# O: json_path + 'characters.json'
-# -------------------------
 def get_character_details(name_of_spider):
-    process = CrawlerProcess()
-    process.crawl(name_of_spider)
-    process.start()
+    # Desc: call spider to process application urls & write to json
+    if os.path.exists(json_path + 'new_urls.json'):
+        process = CrawlerProcess()
+        process.crawl(name_of_spider)
+        process.start()
 
-    with open(json_path + 'characters.json', 'w') as fout:
-        json.dump(character_list, fout)
+        with open(json_path + 'characters.json', 'w') as fout:
+            json.dump(character_list, fout)
+    else:
+        logger.info(json_path + 'new_urls.json does not exist.  CharacterSpider cannot run :: get_character_details()')
 
-
-
-
-# -------------------------
-# Determine New Active Characters
-#
-# Desc: compares json active characters to db active characters
-#
-# Dependencies: get_all_characters_from_db()
-#               json_path + 'active-%Y-%m-%d.json'
-#
-# I:
-# Output: json_path + 'new_urls.json'
-# -------------------------
 def determine_new_active_characters():
+    # Desc: compares json active characters to db active characters
     urls_of_new_active_chars = []
+    urls_to_archive = []
 
-    with open(time.strftime(json_path + 'active-%Y-%m-%d.json')) as f:
+    # active.json into urls list
+    with open(time.strftime(json_path + 'active.json')) as f:
         urls = json.load(f)
 
-    # Get active character urls from the database
     database_urls = get_all_characters_from_db('Y')
 
-    # Compare the urls in active.json to what's in the database and make a list
+    # Archived urls
+    for db_char in database_urls:
+        if db_char not in urls:
+            urls_to_archive.append(db_char)
+
+    if urls_to_archive:
+        with open(json_path + 'inactive_characters.json', 'w') as fout:
+            json.dump(urls_to_archive, fout) 
+
+    # New Active Characters
     for url in urls:
         if url in database_urls:
             pass
         else:
             urls_of_new_active_chars.append(url)
     
-    if not urls_of_new_active_chars:
+    if not urls_of_new_active_chars:                    
         logger.info("No new urls")
     else:
-        # Write urls from list to json file
         with open(json_path + 'new_urls.json', 'w') as fout:
             json.dump(urls_of_new_active_chars, fout)
-
-        # get_character_details(CharacterSpider)
-
-        # Insert details into the database
-        # logger.info("Insert these details into the database")
-        # insert_characters()
-
-        # Clean up the directory a little
-        # logger.info("Final cleanup")
-        # cleanup()
     
-
-
-
-# -------------------------
-# Get Active Characters
-#
-# Desc: runs scraper against forum to gather all active character applications
-#
-# Dependencies: CrawlerProcess()
-#
-# I: name_of_spider
-# O: json_path + 'active-%Y-%m-%d.json'
-# -------------------------
 def get_active_characters(name_of_spider):
+    # Desc: runs scraper against forum for all active character applications
     process = CrawlerProcess()
     process.crawl(name_of_spider)
     process.start()
 
-    with open(time.strftime(json_path + 'active-%Y-%m-%d.json'), 'w') as json_file:
+    with open(time.strftime(json_path + 'active.json'), 'w') as json_file:
         json.dump(topic_list, json_file)
-
-
-
+        logger.info("active characters have been written to json")
 
 
 
@@ -390,7 +402,8 @@ if __name__ == "__main__":
     # Initialize parser
     my_parser = argparse.ArgumentParser()
     my_parser.add_argument('-a', '--active', action='store_true', help='execute the active character script')
-    my_parser.add_argument('-d', '--detail', action='store_true', help='execute the active character script')
+    my_parser.add_argument('-d', '--detail', action='store_true', help='insert details into database')
+    my_parser.add_argument('-t', '--test', action='store_true', help='test')
 
     # Read arguments from command line
     args = my_parser.parse_args()
@@ -401,7 +414,7 @@ if __name__ == "__main__":
     if args.active:
         logger.info("-----------------------------------------------------------")
         logger.info("-----------------------------------------------------------")
-        logger.info("Start")
+        logger.info("Start Active Characters Run")
         logger.info("-----------------------------------------------------------")
         logger.info("-----------------------------------------------------------")
         try:
@@ -423,12 +436,26 @@ if __name__ == "__main__":
         try:
             get_character_details(CharacterSpider)
         except:
-            logger.error("Failure in get_character_details()")    
+            logger.error("Failure in get_character_details()")   
 
+        try:
+            if os.path.exists(json_path + 'characters.json'):
+                insert_characters() 
+            else:
+                logger.error(json_path + 'characters.json does not exist for insert_characters')
+        except:
+            logger.error("Failure in insert_characters()")
+        
+        try:
+            if os.path.exists(json_path + 'inactive_characters.json'):
+                with open(json_path + 'inactive_characters.json') as f:
+                    urls_to_archive = json.load(f)
+                update_inactive_chars(urls_to_archive)
+            else:
+                logger.error(json_path + 'inactive_characters.json does not exist for update_inactive_chars()')
+        except:
+            logger.error("Failure in update_inactive_chars")
         logger.info("Begin clean up")
         cleanup()   
-        
-    
-    
-
-    
+    elif args.test:
+        log_cleanup(max_log_days)
