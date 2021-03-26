@@ -318,7 +318,8 @@ def log_cleanup(days_to_keep):
             f.find('.log')
             file_date = datetime.datetime.strptime(f[11:-4], '%Y-%m-%d')
             if earliest_date > file_date:
-                logger.info(file_date.strftime('%Y-%m-%d') + " has been removed from /logs")
+                logger.info("jcink_sync-" + file_date.strftime('%Y-%m-%d') + ".log has been removed from /logs")
+                os.remove(path + "/jcink_sync-" + file_date.strftime('%Y-%m-%d') + ".log")
     else:
         logger.error("Cannot locate " + path)
 
@@ -350,7 +351,7 @@ def get_character_details(name_of_spider):
         with open(json_path + 'characters.json', 'w') as fout:
             json.dump(character_list, fout)
     else:
-        logger.info(json_path + 'new_urls.json does not exist.  CharacterSpider cannot run :: get_character_details()')
+        logger.info(json_path + 'new_urls.json does not exist.  CharacterSpider cannot run :: get_character_details() ')
 
 def determine_new_active_characters():
     # Desc: compares json active characters to db active characters
